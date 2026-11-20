@@ -178,6 +178,29 @@
       text-align: center;
       min-height: 16px;
     }
+
+    #img-drop {
+      border: 1.5px dashed #ddd;
+      border-radius: 12px;
+      padding: 14px;
+      text-align: center;
+      cursor: pointer;
+      color: #aaa;
+      font-size: 0.88rem;
+      transition: border-color 0.15s, background 0.15s;
+      position: relative;
+    }
+    #img-drop:hover { border-color: #aaa; background: #fafafa; }
+    #img-drop.has-image { padding: 8px; border-style: solid; border-color: #ccc; }
+    #img-preview {
+      display: none;
+      max-height: 90px;
+      max-width: 100%;
+      border-radius: 8px;
+      object-fit: contain;
+    }
+    #img-drop.has-image #img-preview { display: block; margin: 0 auto; }
+    #img-drop.has-image #img-label { display: none; }
   </style>
 </head>
 <body>
@@ -203,7 +226,11 @@
     <div id="add-view" style="display:none; flex-direction:column; gap:12px;">
       <input type="text" id="name-input" placeholder="Item name" />
       <input type="url" id="url-input" placeholder="Store link (https://...)" />
-      <input type="url" id="img-input" placeholder="Image URL (optional)" />
+      <input type="file" id="img-file" accept="image/*" style="display:none" />
+      <div id="img-drop" onclick="document.getElementById('img-file').click()">
+        <span id="img-label">Tap to upload or paste an image (optional)</span>
+        <img id="img-preview" alt="preview" />
+      </div>
       <input type="text" id="price-input" placeholder="Price (optional, e.g. $29.99)" />
     </div>
 
@@ -220,7 +247,48 @@
   const ADMIN_HASH = '744e5e6c66ae339a47e7e0b9c66dca146d9de89bb06ff4c3bf93cf2cf87a3650'
 
   const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
+  const overlay = document.getElementById('overlay')
   let unlocked = false
+  let pendingImageFile = null
+
+  function setImagePreview(file) {
+    pendingImageFile = file
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      document.getElementById('img-preview').src = e.target.result
+      document.getElementById('img-drop').classList.add('has-image')
+    }
+    reader.readAsDataURL(file)
+  }
+
+  document.getElementById('img-file').onchange = (e) => {
+    if (e.target.files[0]) setImagePreview(e.target.files[0])
+  }
+
+  window.addEventListener('paste', (e) => {
+    if (!overlay.classList.contains('open') || !unlocked) return
+    for (const item of e.clipboardData.items) {
+      if (item.type.startsWith('image/')) {
+        setImagePreview(item.getAsFile())
+        break
+      }
+    }
+  })
+
+  async function uploadImage(file) {
+    const ext = file.type.split('/')[1] || 'jpg'
+    const fileName = `${Date.now()}.${ext}`
+    const { data, error } = await db.storage.from('images').upload(fileName, file, { upsert: true })
+    if (error) throw error
+    return db.storage.from('images').getPublicUrl(data.path).data.publicUrl
+  }
+
+  function resetImageInput() {
+    pendingImageFile = null
+    document.getElementById('img-file').value = ''
+    document.getElementById('img-preview').src = ''
+    document.getElementById('img-drop').classList.remove('has-image')
+  }
 
   function formatDate(iso) {
     return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -271,7 +339,6 @@
 
   loadItems()
 
-  const overlay = document.getElementById('overlay')
   const status = document.getElementById('status')
   const primaryBtn = document.getElementById('primary-btn')
 
@@ -288,6 +355,7 @@
   function closeOverlay() {
     overlay.classList.remove('open')
     status.textContent = ''
+    resetImageInput()
   }
 
   function showPwView() {
@@ -324,12 +392,23 @@
   async function addItem() {
     const name = document.getElementById('name-input').value.trim()
     const url = document.getElementById('url-input').value.trim()
-    const image_url = document.getElementById('img-input').value.trim() || null
     const price = document.getElementById('price-input').value.trim() || null
     if (!name || !url) { status.textContent = 'Name and link are required'; return }
 
     primaryBtn.disabled = true
     status.textContent = 'Adding...'
+
+    let image_url = null
+    if (pendingImageFile) {
+      try {
+        status.textContent = 'Uploading image...'
+        image_url = await uploadImage(pendingImageFile)
+      } catch (err) {
+        status.textContent = 'Image upload failed: ' + err.message
+        primaryBtn.disabled = false
+        return
+      }
+    }
 
     const { error } = await db.from('items').insert({ name, url, image_url, price })
     primaryBtn.disabled = false
@@ -338,8 +417,8 @@
 
     document.getElementById('name-input').value = ''
     document.getElementById('url-input').value = ''
-    document.getElementById('img-input').value = ''
     document.getElementById('price-input').value = ''
+    resetImageInput()
     status.textContent = 'Added!'
     loadItems()
     setTimeout(closeOverlay, 800)
