@@ -35,37 +35,74 @@
     .card {
       background: white;
       border-radius: 18px;
-      padding: 22px 12px 18px;
+      overflow: hidden;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      gap: 10px;
       text-decoration: none;
       color: #111;
       box-shadow: 0 2px 10px rgba(0,0,0,0.07);
+      position: relative;
       -webkit-tap-highlight-color: transparent;
       transition: transform 0.12s, box-shadow 0.12s;
     }
 
-    .card:active {
-      transform: scale(0.95);
-      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-    }
+    .card:active { transform: scale(0.95); box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
 
-    .card img {
-      width: 52px;
-      height: 52px;
-      border-radius: 12px;
+    .card-img {
+      width: 100%;
+      aspect-ratio: 1;
       object-fit: contain;
+      background: #f8f8f8;
+      padding: 12px;
     }
 
-    .card span {
+    .card-body {
+      padding: 10px 12px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .card-name {
       font-size: 0.82rem;
-      font-weight: 500;
-      text-align: center;
+      font-weight: 600;
       line-height: 1.3;
       word-break: break-word;
     }
+
+    .card-price {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #1a7f3c;
+    }
+
+    .card-date {
+      font-size: 0.72rem;
+      color: #aaa;
+      margin-top: 2px;
+    }
+
+    .delete-btn {
+      display: none;
+      position: absolute;
+      top: 7px;
+      right: 7px;
+      background: rgba(0,0,0,0.55);
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 26px;
+      height: 26px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+      z-index: 2;
+    }
+
+    body.admin-mode .delete-btn { display: flex; }
+    body.admin-mode .card:active { transform: none; }
 
     .empty {
       grid-column: 1 / -1;
@@ -86,7 +123,6 @@
       padding: 8px;
     }
 
-    /* Modal overlay */
     .overlay {
       display: none;
       position: fixed;
@@ -107,14 +143,10 @@
       max-width: 480px;
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: 12px;
     }
 
-    .sheet h2 {
-      font-size: 1.1rem;
-      font-weight: 700;
-      margin-bottom: 2px;
-    }
+    .sheet h2 { font-size: 1.1rem; font-weight: 700; }
 
     .sheet input {
       padding: 13px 16px;
@@ -164,15 +196,15 @@
   <div class="sheet">
     <h2 id="sheet-title">Admin</h2>
 
-    <!-- Password view -->
     <div id="pw-view">
       <input type="password" id="pw-input" placeholder="Password" autocomplete="current-password" />
     </div>
 
-    <!-- Add item view -->
-    <div id="add-view" style="display:none; flex-direction:column; gap:14px;">
+    <div id="add-view" style="display:none; flex-direction:column; gap:12px;">
       <input type="text" id="name-input" placeholder="Item name" />
-      <input type="url" id="url-input" placeholder="Link (https://...)" />
+      <input type="url" id="url-input" placeholder="Store link (https://...)" />
+      <input type="url" id="img-input" placeholder="Image URL (optional)" />
+      <input type="text" id="price-input" placeholder="Price (optional, e.g. $29.99)" />
     </div>
 
     <button id="primary-btn">Unlock</button>
@@ -185,14 +217,17 @@
 <script>
   const SUPABASE_URL = 'https://mgmzpczwkmcbtpdceiew.supabase.co'
   const SUPABASE_KEY = 'sb_publishable_V6yP0mH8gNbfqrwCS26awA_PQLda-v4'
-  const ADMIN_HASH = '22e8d08339d1d198ac01c0e2189e4c1338689147632a17290f3256c0c0822691'
+  const ADMIN_HASH = '744e5e6c66ae339a47e7e0b9c66dca146d9de89bb06ff4c3bf93cf2cf87a3650'
 
   const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
-
   let unlocked = false
 
+  function formatDate(iso) {
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  }
+
   async function loadItems() {
-    const { data, error } = await db.from('items').select('*').order('id')
+    const { data, error } = await db.from('items').select('*').order('created_at', { ascending: false })
     const grid = document.getElementById('grid')
     if (error || !data.length) {
       grid.innerHTML = '<p class="empty">No items yet.</p>'
@@ -200,16 +235,37 @@
     }
     grid.innerHTML = ''
     data.forEach(item => {
-      let domain
-      try { domain = new URL(item.url).hostname } catch { domain = '' }
-      const favicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=64`
-      const a = document.createElement('a')
-      a.href = item.url
-      a.target = '_blank'
-      a.rel = 'noopener noreferrer'
-      a.className = 'card'
-      a.innerHTML = `<img src="${favicon}" alt=""><span>${item.name}</span>`
-      grid.appendChild(a)
+      let domain = ''
+      try { domain = new URL(item.url).hostname } catch {}
+      const imgSrc = item.image_url || `https://www.google.com/s2/favicons?domain=${domain}&sz=128`
+
+      const card = document.createElement('a')
+      card.href = item.url
+      card.target = '_blank'
+      card.rel = 'noopener noreferrer'
+      card.className = 'card'
+
+      const delBtn = document.createElement('button')
+      delBtn.className = 'delete-btn'
+      delBtn.textContent = '×'
+      delBtn.onclick = async (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        if (!confirm(`Remove "${item.name}"?`)) return
+        await db.from('items').delete().eq('id', item.id)
+        loadItems()
+      }
+
+      card.innerHTML = `
+        <img class="card-img" src="${imgSrc}" alt="${item.name}" onerror="this.src='https://www.google.com/s2/favicons?domain=${domain}&sz=128'">
+        <div class="card-body">
+          <div class="card-name">${item.name}</div>
+          ${item.price ? `<div class="card-price">${item.price}</div>` : ''}
+          ${item.created_at ? `<div class="card-date">${formatDate(item.created_at)}</div>` : ''}
+        </div>
+      `
+      card.appendChild(delBtn)
+      grid.appendChild(card)
     })
   }
 
@@ -217,10 +273,7 @@
 
   const overlay = document.getElementById('overlay')
   const status = document.getElementById('status')
-  const pwView = document.getElementById('pw-view')
-  const addView = document.getElementById('add-view')
   const primaryBtn = document.getElementById('primary-btn')
-  const sheetTitle = document.getElementById('sheet-title')
 
   document.getElementById('add-btn').onclick = () => {
     overlay.classList.add('open')
@@ -229,27 +282,27 @@
     else showPwView()
   }
 
-  document.getElementById('secondary-btn').onclick = () => {
-    overlay.classList.remove('open')
-  }
+  document.getElementById('secondary-btn').onclick = closeOverlay
+  overlay.onclick = (e) => { if (e.target === overlay) closeOverlay() }
 
-  overlay.onclick = (e) => {
-    if (e.target === overlay) overlay.classList.remove('open')
+  function closeOverlay() {
+    overlay.classList.remove('open')
+    status.textContent = ''
   }
 
   function showPwView() {
-    sheetTitle.textContent = 'Enter password'
-    pwView.style.display = 'block'
-    addView.style.display = 'none'
+    document.getElementById('sheet-title').textContent = 'Enter password'
+    document.getElementById('pw-view').style.display = 'block'
+    document.getElementById('add-view').style.display = 'none'
     primaryBtn.textContent = 'Unlock'
     primaryBtn.onclick = checkPassword
     document.getElementById('pw-input').focus()
   }
 
   function showAddView() {
-    sheetTitle.textContent = 'Add item'
-    pwView.style.display = 'none'
-    addView.style.display = 'flex'
+    document.getElementById('sheet-title').textContent = 'Add item'
+    document.getElementById('pw-view').style.display = 'none'
+    document.getElementById('add-view').style.display = 'flex'
     primaryBtn.textContent = 'Add'
     primaryBtn.onclick = addItem
     document.getElementById('name-input').focus()
@@ -261,7 +314,7 @@
     const hash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
     if (hash === ADMIN_HASH) {
       unlocked = true
-      status.textContent = ''
+      document.body.classList.add('admin-mode')
       showAddView()
     } else {
       status.textContent = 'Wrong password'
@@ -271,21 +324,25 @@
   async function addItem() {
     const name = document.getElementById('name-input').value.trim()
     const url = document.getElementById('url-input').value.trim()
-    if (!name || !url) { status.textContent = 'Fill in both fields'; return }
+    const image_url = document.getElementById('img-input').value.trim() || null
+    const price = document.getElementById('price-input').value.trim() || null
+    if (!name || !url) { status.textContent = 'Name and link are required'; return }
 
     primaryBtn.disabled = true
     status.textContent = 'Adding...'
 
-    const { error } = await db.from('items').insert({ name, url })
+    const { error } = await db.from('items').insert({ name, url, image_url, price })
     primaryBtn.disabled = false
 
     if (error) { status.textContent = 'Error: ' + error.message; return }
 
     document.getElementById('name-input').value = ''
     document.getElementById('url-input').value = ''
+    document.getElementById('img-input').value = ''
+    document.getElementById('price-input').value = ''
     status.textContent = 'Added!'
     loadItems()
-    setTimeout(() => { overlay.classList.remove('open'); status.textContent = '' }, 800)
+    setTimeout(closeOverlay, 800)
   }
 </script>
 
